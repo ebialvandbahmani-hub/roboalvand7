@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""رابط تلگرام روبو۷ الوند — فاز ۱ (سیگنال + تحلیل، بدون اجرای سفارش)."""
+"""رابط تلگرام روبو۷ الوند — فاز ۱
+دو گزینهٔ مستقل: «ستاپ معاملاتی» و «تجزیه و تحلیل». بدون اجرای سفارش.
+"""
 from __future__ import annotations
 
 import logging
@@ -41,20 +43,51 @@ CANDLE_LIMIT = 200
 _TOKEN_RE = re.compile(r"^\d{5,15}:[A-Za-z0-9_-]{30,50}$")
 _SYMBOL_RE = re.compile(r"^[A-Z0-9/._=]{2,20}$")
 
-_BTN_ANALYZE = "📊 تحلیل"
-_BTN_HELP = "ℹ️ راهنما"
+# ---------- منوی پایین چت: فقط دو گزینه ----------
+_BTN_SETUP = "📈 ستاپ معاملاتی"
+_BTN_ANALYSIS = "📊 تجزیه و تحلیل"
 
 MAIN_MENU = ReplyKeyboardMarkup(
-    [[_BTN_ANALYZE, _BTN_HELP]],
+    [[_BTN_SETUP], [_BTN_ANALYSIS]],
     resize_keyboard=True,
 )
+
+# ---------- حالت فعالِ هر کاربر ----------
+MODE_KEY = "mode"
+MODE_SETUP = "setup"
+MODE_ANALYSIS = "analysis"
+
+_ASK_SYMBOL = {
+    MODE_SETUP: (
+        "📈 حالت «ستاپ معاملاتی» فعال شد.\n"
+        "اسم نماد را بفرست — مثلاً: BTC یا XAUUSD 👇"
+    ),
+    MODE_ANALYSIS: (
+        "📊 حالت «تجزیه و تحلیل» فعال شد.\n"
+        "اسم نماد را بفرست — مثلاً: ETH یا EURUSD 👇"
+    ),
+}
+
+_PICK_FIRST = (
+    "اول از منوی پایین یکی را انتخاب کن 👇\n"
+    "📈 ستاپ معاملاتی  •  📊 تجزیه و تحلیل"
+)
+
+# رجکس منو از خودِ دکمه‌ها ساخته می‌شود تا هرگز ناهم‌خوانی پیش نیاید
+_MENU_RE = r"^(" + re.escape(_BTN_SETUP) + "|" + re.escape(_BTN_ANALYSIS) + r")$"
 
 
 def validate_token(token: str) -> bool:
     return bool(_TOKEN_RE.match(token))
 
 
+def _is_symbol(text: str) -> bool:
+    return bool(_SYMBOL_RE.match(text.strip().upper()))
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """خوشامد + نمایش منوی دو گزینه‌ای؛ حالت قبلی پاک می‌شود."""
+    context.user_data.pop(MODE_KEY, None)
     await update.message.reply_text(M.START, reply_markup=MAIN_MENU)
 
 
@@ -62,27 +95,30 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(M.HELP, reply_markup=MAIN_MENU)
 
 
-def _is_symbol(text: str) -> bool:
-    return bool(_SYMBOL_RE.match(text.strip().upper()))
-
-
 async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """کلیک روی هر یک از دو دکمه: حالت را ذخیره و نماد را می‌پرسد."""
     text = (update.message.text or "").strip()
 
-    if text == _BTN_HELP:
-        await update.message.reply_text(M.HELP, reply_markup=MAIN_MENU)
+    if text == _BTN_SETUP:
+        context.user_data[MODE_KEY] = MODE_SETUP
+    elif text == _BTN_ANALYSIS:
+        context.user_data[MODE_KEY] = MODE_ANALYSIS
+    else:
         return
 
-    if text == _BTN_ANALYZE:
-        await update.message.reply_text(
-            "📊 اسم نماد را بفرست تا تحلیل بگیرى — مثلاً: BTC یا XAUUSD 👇",
-            reply_markup=MAIN_MENU,
-        )
-        return
+    await update.message.reply_text(
+        _ASK_SYMBOL[context.user_data[MODE_KEY]], reply_markup=MAIN_MENU
+    )
 
 
 async def symbol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text.strip()
+    mode = context.user_data.get(MODE_KEY)
+
+    if mode not in (MODE_SETUP, MODE_ANALYSIS):
+        await update.message.reply_text(_PICK_FIRST, reply_markup=MAIN_MENU)
+        return
+
     if not _is_symbol(text):
         await update.message.reply_text(
             M.BAD_SYMBOL.format(symbol=text), reply_markup=MAIN_MENU
@@ -98,17 +134,25 @@ async def symbol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
+    # شناسهٔ تلگرام برای _persist_signal داخل build_setup لازم است
     if update.effective_user is not None:
         md.telegram_id = update.effective_user.id
 
     an = analyze(md, timeframe=TIMEFRAME_LABEL)
-    setup, reason = build_setup(md, an)
 
-    if setup is not None and reason == "OK":
-        await update.message.reply_text(format_setup(md, an, setup), parse_mode="HTML")
-    else:
-        await update.message.reply_text(M.NO_SETUP.format(reason=reason), parse_mode="HTML")
+    if mode == MODE_SETUP:
+        setup, reason = build_setup(md, an)
+        if setup is not None and reason == "OK":
+            await update.message.reply_text(
+                format_setup(md, an, setup), parse_mode="HTML"
+            )
+        else:
+            await update.message.reply_text(
+                M.NO_SETUP.format(reason=reason), parse_mode="HTML"
+            )
+        return
 
+    # حالت تحلیل: عمداً build_setup صدا زده نمی‌شود تا سیگنالی ثبت نشود
     await update.message.reply_text(format_analysis(md, an), parse_mode="HTML")
 
 
@@ -131,7 +175,7 @@ _health_runner = None
 
 
 async def _connect_db() -> None:
-    """اتصال best-effort به پایگاه‌داده؛ نبود یا قطعی DB مانع اجرای ربات نمی‌شود."""
+    """اتصال best-effort؛ نبود DB مانع اجرای ربات نمی‌شود."""
     try:
         from db import get_db
         await get_db().connect()
@@ -181,10 +225,11 @@ def main() -> None:
     )
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
+    # منو قبل از هندلر متن ثبت شود، وگرنه دکمه‌ها «نماد» تلقی می‌شوند
+    application.add_handler(MessageHandler(filters.Regex(_MENU_RE), menu_handler))
     application.add_handler(
-        MessageHandler(filters.Regex(r"^(📊 تحلیل|ℹ️ راهنما)$"), menu_handler)
+        MessageHandler(filters.TEXT & ~filters.COMMAND, symbol_handler)
     )
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, symbol_handler))
     application.add_error_handler(error_handler)
 
     log.info("Bot polling started")
