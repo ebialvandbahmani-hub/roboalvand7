@@ -7,7 +7,7 @@ import os
 import re
 
 from aiohttp import web
-from telegram import Update
+from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -41,34 +41,63 @@ CANDLE_LIMIT = 200
 _TOKEN_RE = re.compile(r"^\d{5,15}:[A-Za-z0-9_-]{30,50}$")
 _SYMBOL_RE = re.compile(r"^[A-Z0-9/._=]{2,20}$")
 
+# --- منوی پایین چت (Reply Keyboard) ---
+_BTN_ANALYZE = "📊 تحلیل"
+_BTN_HELP = "ℹ️ راهنما"
+
+MAIN_MENU = ReplyKeyboardMarkup(
+    [[_BTN_ANALYZE, _BTN_HELP]],
+    resize_keyboard=True,
+)
+
 
 def validate_token(token: str) -> bool:
     return bool(_TOKEN_RE.match(token))
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(M.START)
+    await update.message.reply_text(M.START, reply_markup=MAIN_MENU)
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(M.HELP)
+    await update.message.reply_text(M.HELP, reply_markup=MAIN_MENU)
 
 
 def _is_symbol(text: str) -> bool:
     return bool(_SYMBOL_RE.match(text.strip().upper()))
 
 
+async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """کلیک روی دکمه‌های منو را قبل از symbol_handler می‌گیرد."""
+    text = (update.message.text or "").strip()
+
+    if text == _BTN_HELP:
+        await update.message.reply_text(M.HELP, reply_markup=MAIN_MENU)
+        return
+
+    if text == _BTN_ANALYZE:
+        await update.message.reply_text(
+            "📊 اسم نماد را بفرست تا تحلیل بگیرى \u2014 مثلاً: BTC یا XAUUSD 👇",
+            reply_markup=MAIN_MENU,
+        )
+        return
+
+
 async def symbol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text.strip()
     if not _is_symbol(text):
-        await update.message.reply_text(M.BAD_SYMBOL.format(symbol=text))
+        await update.message.reply_text(
+            M.BAD_SYMBOL.format(symbol= update.message.reply_text(M.BMAIN_MENU
+        )
         return
 
     await update.message.reply_text(M.BUSY)
 
     md = await get_market_data(text, interval=TIMEFRAME_INTERVAL, limit=CANDLE_LIMIT)
     if md is None:
-        await update.message.reply_text(M.NO_DATA.format(symbol=text))
+        await update.message.reply_text(
+            M.NO_DATA.format(symbol=text), reply_markup=MAIN_MENU
+        )
         return
 
     # build_setup persists through signals._persist_signal; preserve the known
@@ -158,6 +187,10 @@ def main() -> None:
     )
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
+    # منو اول ثبت شود تا symbol_handler دکمه‌ها را نماد فرض نکند
+    application.add_handler(
+        MessageHandler(filters.Regex(r"^(📊 تحلیل|ℹ️ راهنما)$"), menu_handler)
+    )
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, symbol_handler))
     application.add_error_handler(error_handler)
 
