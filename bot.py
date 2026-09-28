@@ -41,7 +41,6 @@ CANDLE_LIMIT = 200
 _TOKEN_RE = re.compile(r"^\d{5,15}:[A-Za-z0-9_-]{30,50}$")
 _SYMBOL_RE = re.compile(r"^[A-Z0-9/._=]{2,20}$")
 
-# --- منوی پایین چت (Reply Keyboard) ---
 _BTN_ANALYZE = "📊 تحلیل"
 _BTN_HELP = "ℹ️ راهنما"
 
@@ -68,7 +67,6 @@ def _is_symbol(text: str) -> bool:
 
 
 async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """کلیک روی دکمه‌های منو را قبل از symbol_handler می‌گیرد."""
     text = (update.message.text or "").strip()
 
     if text == _BTN_HELP:
@@ -77,7 +75,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if text == _BTN_ANALYZE:
         await update.message.reply_text(
-            "📊 اسم نماد را بفرست تا تحلیل بگیرى \u2014 مثلاً: BTC یا XAUUSD 👇",
+            "📊 اسم نماد را بفرست تا تحلیل بگیرى — مثلاً: BTC یا XAUUSD 👇",
             reply_markup=MAIN_MENU,
         )
         return
@@ -87,7 +85,7 @@ async def symbol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = update.message.text.strip()
     if not _is_symbol(text):
         await update.message.reply_text(
-            M.BAD_SYMBOL.format(symbol= update.message.reply_text(M.BMAIN_MENU
+            M.BAD_SYMBOL.format(symbol=text), reply_markup=MAIN_MENU
         )
         return
 
@@ -100,16 +98,12 @@ async def symbol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # build_setup persists through signals._persist_signal; preserve the known
-    # Telegram identity so db.add_signal receives the required telegram_id.
     if update.effective_user is not None:
         md.telegram_id = update.effective_user.id
 
     an = analyze(md, timeframe=TIMEFRAME_LABEL)
     setup, reason = build_setup(md, an)
 
-    # build_setup deliberately returns an invalid setup alongside its reason;
-    # only format it as a trade setup when the risk validation passed.
     if setup is not None and reason == "OK":
         await update.message.reply_text(format_setup(md, an, setup), parse_mode="HTML")
     else:
@@ -187,7 +181,6 @@ def main() -> None:
     )
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
-    # منو اول ثبت شود تا symbol_handler دکمه‌ها را نماد فرض نکند
     application.add_handler(
         MessageHandler(filters.Regex(r"^(📊 تحلیل|ℹ️ راهنما)$"), menu_handler)
     )
